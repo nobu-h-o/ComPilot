@@ -168,3 +168,8 @@ lookup_dir_*/
 results/
 live_results_*.csv
 *.pkl
+
+# --- External dependencies (cloned/built locally, see README) ---
+tiramisu/
+TiraLib/
+TiraLibCPP/

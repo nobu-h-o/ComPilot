@@ -13,7 +13,7 @@ NUM_RUNS=$1            # Number of duplicates to start
 SCREEN_PREFIX=$2       # Screen session prefix
 CONFIG_FILE=${3:-config.yaml} # Optional config YAML path (default: config.yaml)
 
-PYTHON_SCRIPT="compilot.py"    # The Python script to run
+PYTHON_SCRIPT="src/compilot.py"    # The Python script to run (run this launcher from the repo root)
 
 # The name of your Conda environment
 CONDA_DIR=/share/apps/NYUAD5/miniconda/3-4.11.0

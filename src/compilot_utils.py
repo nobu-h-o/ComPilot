@@ -267,6 +267,40 @@ Path(lookup_files_dir).mkdir(exist_ok=True)
 
 llm_id = os.getenv("LLM_ID")
 
+def _endpoint_kind():
+    """Which OpenAI-compatible provider BASE_URL points at: 'gemini', 'anthropic' or 'other'."""
+    base_url = os.getenv("BASE_URL") or ""
+    if "generativelanguage.googleapis.com" in base_url:
+        return "gemini"
+    if "api.anthropic.com" in base_url:
+        return "anthropic"
+    return "other"
+
+def _adapt_request_kwargs(kwargs):
+    """Drop or adjust request fields a provider's OpenAI-compatible endpoint rejects.
+    - Gemini: rejects unknown fields with a 400 (`seed`, vLLM's `chat_template_kwargs`);
+      Gemini Flash models think by default.
+    - Anthropic (https://platform.claude.com/docs/en/api/openai-sdk): on Claude 4.7+
+      models any `temperature` below 1 or `top_p` other than the default returns a 400,
+      as does sending both; `seed` is ignored. Thinking is always on for Claude 5 models,
+      so `enable_thinking` has no effect. `max_tokens` is set explicitly so thinking plus
+      the answer is not cut short.
+    - Other endpoints (vLLM, SGLang, ...): sent unchanged."""
+    kind = _endpoint_kind()
+    if kind == "gemini":
+        kwargs.pop("seed", None)
+        kwargs.pop("extra_body", None)
+    elif kind == "anthropic":
+        for k in ("temperature", "top_p", "seed", "extra_body"):
+            kwargs.pop(k, None)
+        kwargs.setdefault("max_tokens", 16000)
+    return kwargs
+
+def _thinking_extra_body(enable_thinking):
+    """`chat_template_kwargs` toggles thinking on vLLM/SGLang-served models (e.g. Qwen).
+    Providers that reject it drop it in `_adapt_request_kwargs`."""
+    return {"chat_template_kwargs": {"enable_thinking": enable_thinking}}
+
 # Whether to reuse cached compiler feedback messages across schedules/runs.
 # The numeric caches (initial execution time and skewing solver factors) are
 # always kept because they are format-agnostic and expensive to recompute; only
@@ -859,7 +893,7 @@ def _chat_completion(messages, max_attempts=60, **kwargs):
     on a non-transient error (e.g. authentication or a malformed request)."""
     for attempt in range(1, max_attempts + 1):
         try:
-            response = client.chat.completions.create(model=llm_id, messages=messages, **kwargs)
+            response = client.chat.completions.create(model=llm_id, messages=messages, **_adapt_request_kwargs(dict(kwargs)))
             content = response.choices[0].message.content if response.choices else None
             if content is None:
                 raise ValueError("empty response content")
@@ -887,7 +921,7 @@ def get_LLM_response(compiler_response, messages, top_p = 1, temperature=1, enab
         messages,
         top_p=top_p,
         temperature=temperature,
-        extra_body={"chat_template_kwargs": {"enable_thinking": enable_thinking}},
+        extra_body=_thinking_extra_body(enable_thinking),
     )
     messages.append({"role": "assistant", "content": new_assistant_message})
     last_line = new_assistant_message.splitlines()[-1] if new_assistant_message else ''
@@ -905,7 +939,7 @@ def initialize_conversation(system_instructions, first_message, temperature=0, s
         messages,
         temperature=temperature,
         seed=seed,
-        extra_body={"chat_template_kwargs": {"enable_thinking": enable_thinking}},
+        extra_body=_thinking_extra_body(enable_thinking),
     )
     messages.append({"role": "assistant", "content": new_assistant_message})
     return messages, new_assistant_message, tokens_usage
@@ -979,7 +1013,7 @@ def get_compact_LLM_response(system_instructions, compact_user_message, top_p=1,
         messages,
         top_p=top_p,
         temperature=temperature,
-        extra_body={"chat_template_kwargs": {"enable_thinking": enable_thinking}},
+        extra_body=_thinking_extra_body(enable_thinking),
     )
     last_line = new_assistant_message.splitlines()[-1] if new_assistant_message else ''
     return last_line, new_assistant_message, tokens_usage

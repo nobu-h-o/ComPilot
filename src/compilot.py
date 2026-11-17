@@ -17,6 +17,7 @@ import time
 import json
 import pickle
 import traceback
+import re
 import yaml
 from pathlib import Path
 
@@ -27,9 +28,31 @@ parser.add_argument('--completion-file', '-c', help="a name for the completion s
 parser.add_argument('--config', help="path to the yaml configuration file", type= str, default= "config.yaml")
 args = parser.parse_args()
 
+# Load environment variables from a .env file (repo root or cwd), without
+# overriding variables already set in the shell. See .env.example.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+load_dotenv()
+
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+def _expand_env(value):
+    """Recursively expand ${VAR} / ${VAR:-default} references in config strings."""
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    if isinstance(value, str):
+        return _ENV_REF.sub(lambda m: os.environ.get(m.group(1)) or (m.group(2) or ""), value)
+    return value
+
 # Load config
 with open(args.config, 'r') as f:
-    config = yaml.safe_load(f)
+    config = _expand_env(yaml.safe_load(f))
+
+if not config.get("openai_api_key"):
+    sys.exit("No API key configured: set ANTHROPIC_API_KEY (or GEMINI_API_KEY for Gemini) in your environment or in .env "
+             "(cp .env.example .env), or set openai_api_key in the config.")
 
 os.environ['OPENAI_API_KEY'] = config.get("openai_api_key", "<SET_OPENAI_API_KEY>")
 os.environ['LLM_ID'] = config.get("llm_id", "<LLM_ID>")
@@ -161,7 +184,7 @@ if Path(per_bench_results_json).is_file():
         results_json = json.load(f)
 else:
     results_json = {
-        "configuration": config,
+        "configuration": {**config, "openai_api_key": "<redacted>"},
         "programs": {}
     }
 

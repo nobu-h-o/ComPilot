@@ -1,16 +1,31 @@
 # Configuration for ComPilot
 
 # --- LLM configuration ---
-# Model id served by your OpenAI-compatible endpoint.
-llm_id: "Qwen/Qwen3.5-9B"          # e.g. gpt-4o, gemini-2.0-flash, llama3.3, a local vLLM/Ollama model
-# Base URL of the OpenAI-compatible API.
-base_url: "http://localhost:8000/v1"  # e.g. https://api.openai.com/v1, or your local vLLM/Ollama gateway
-# API key for the endpoint (any non-empty string works for most local servers).
-openai_api_key: "EMPTY"
+# Values of the form ${VAR} or ${VAR:-default} are read from the environment
+# (and from a .env file in the repo root, if present; see .env.example).
+# llm_id: model id served by the OpenAI-compatible endpoint at base_url
+#   (e.g. claude-haiku-5-5, gemini-3.8-flash, gpt-4o, Qwen/Qwen3.5-9B on a local vLLM/Ollama server).
+# openai_api_key: API key for that endpoint (any non-empty string works for most local servers).
+
+# Claude (default), through Anthropic's OpenAI-compatible endpoint.
+# Claude 5 models reject temperature/top_p other than their defaults, so ComPilot
+# does not send them (or seed) to this endpoint; thinking is on by default.
+llm_id: "${LLM_ID:-claude-haiku-5-5}"
+base_url: "${LLM_BASE_URL:-https://api.anthropic.com/v1/}"
+openai_api_key: "${ANTHROPIC_API_KEY}"
+
+# Gemini, through Google's OpenAI-compatible endpoint:
+# llm_id: "${LLM_ID:-gemini-3.8-flash}"
+# base_url: "${LLM_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}"
+# openai_api_key: "${GEMINI_API_KEY}"
 
 # --- Environment paths ---
-benchmarks_dir: "./MINI_benchmarks/"  # directory of benchmark folders (each with a <name>_generator.cpp)
-tiralib_dir: "../TiraLib/"            # path to a compiled TiraLib checkout
+# Directory of benchmark folders (each with a <name>_generator.cpp).
+# Quick test: 5 PolyBench MEDIUM kernels (2mm, heat3d, symm, syr2k, trisolv).
+benchmarks_dir: "./benchmarks/polybench_medium5/"
+# Full PolyBench suite (30 kernels; sizes: MINI, SMALL, MEDIUM, LARGE, XLARGE):
+# benchmarks_dir: "./benchmarks/polybench/MINI/"
+tiralib_dir: "./TiraLib/"             # path to a compiled TiraLib checkout
 lookup_dir_suffix: "base"             # results of already-tried schedules are cached under lookup_dir_<suffix>/
 base_results_dir: "./results"
 

@@ -3,8 +3,9 @@
 
 # --- Core: required to run compilot.py ---
 openai>=1.0
+python-dotenv  # loads .env (API keys) into the environment
 pyyaml
-numpy
+numpy<2  # TiraLib pins numpy ^1.24 (1.26.4)
 sympy
 filelock
 

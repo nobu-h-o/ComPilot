@@ -24,36 +24,44 @@ Rejected proposals are returned with a concrete cause (unknown computation ID, o
 
 ComPilot drives the [Tiramisu](https://github.com/Tiramisu-Compiler/tiramisu) polyhedral compiler through **TiraLib**. Both must be built and available before running ComPilot.
 
-1. Build Tiramisu and TiraLib, and make sure TiraLib's `config.yaml` points to your Tiramisu install.
-2. Install the Python dependencies:
+1. Build Tiramisu and TiraLib, and make sure TiraLib's `config.yaml` points to your Tiramisu install. ComPilot runs TiraLib in server mode, which also needs [TiraLibCPP](https://github.com/Tiramisu-Compiler/TiraLibCPP). By default `config.yaml` expects the three checkouts inside the repository root (`./tiramisu`, `./TiraLib`, `./TiraLibCPP`, all gitignored):
+   - **Tiramisu**: requires CMake ≥ 3.22, LLVM 14 (Halide at the pinned submodule commit is v14 and supports LLVM 12–15), ISL (vendored in `3rdParty/isl`), and Halide (`3rdParty/Halide` submodule). Check out the submodule at its pinned commit with `git submodule update --init 3rdParty/Halide`; `utils/scripts/install_submodules.sh` uses `--remote`, which pulls Halide `master` instead. Configure with `-DUSE_AUTO_SCHEDULER=TRUE` (TiraLib links `libtiramisu_auto_scheduler`) and install to a prefix, e.g. `cmake --install build --prefix tiramisu/install`.
+   - **TiraLibCPP**: `cmake -S . -B build -DTIRAMISU_INSTALL=<tiramisu prefix> -DCMAKE_INSTALL_PREFIX=<prefix> && cmake --build build && cmake --install build`.
+   - **TiraLib**: copy `config.yaml.example` to `config.yaml` and list the include/lib directories of Tiramisu, Halide, ISL and TiraLibCPP under `dependencies`.
+2. Install the Python dependencies (TiraLib requires `numpy<2`), ideally in a virtual environment:
    ```bash
+   python3 -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
    ```
-3. Copy/edit `config.yaml` (see below) to match your setup.
+   The commands below assume this environment is active (or call `.venv/bin/python` directly).
+3. Set your API key: `cp .env.example .env` and fill in `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY` if you switch `config.yaml` to Gemini).
+4. Copy/edit `config.yaml` (see below) to match your setup.
 
 ---
 
 ## Configuration
 
-All settings live in `config.yaml`:
+All settings live in `config.yaml`. String values may reference environment variables as `${VAR}` or `${VAR:-default}`; these are read from the shell or from a `.env` file in the repository root (see `.env.example`). By default ComPilot uses Claude (`claude-haiku-5-5`) through [Anthropic's OpenAI-compatible endpoint](https://platform.claude.com/docs/en/api/openai-sdk), with the key taken from `ANTHROPIC_API_KEY`. A commented-out Gemini block (`gemini-3.8-flash`, key from `GEMINI_API_KEY`) sits right below it in `config.yaml`; set `LLM_ID` / `LLM_BASE_URL` to point elsewhere. Provider quirks are handled in `compilot_utils._adapt_request_kwargs`: for Claude, `temperature`, `top_p` and `seed` are not sent (Claude 5 models reject non-default sampling values) and thinking stays on by default, so `enable_thinking` has no effect; for Gemini, `seed` and `chat_template_kwargs` are not sent.
 
 | Key | Description |
 |---|---|
-| `llm_id` | Model id served by your OpenAI-compatible endpoint (e.g. `gpt-4o`, `gemini-2.0-flash`, a local vLLM/Ollama model). |
+| `llm_id` | Model id served by your OpenAI-compatible endpoint (e.g. `claude-haiku-5-5`, `gemini-3.8-flash`, `gpt-4o`, a local vLLM/Ollama model). |
 | `base_url` | Base URL of the OpenAI-compatible API. |
-| `openai_api_key` | API key for the endpoint (any non-empty string for most local servers). |
+| `openai_api_key` | API key for the endpoint (defaults to `${ANTHROPIC_API_KEY}`; any non-empty string for most local servers). |
 | `interaction_mode` | `conversational` (default) or `compact` — see [Interaction modes](#interaction-modes). |
-| `benchmarks_dir` | Directory of benchmark folders; each `<name>/` must contain `<name>_generator.cpp`. |
+| `benchmarks_dir` | Directory of benchmark folders; each `<name>/` must contain `<name>_generator.cpp`. The PolyBench kernels (from Tiramisu, see [`benchmarks/README.md`](benchmarks/README.md)) are included in `benchmarks/polybench/<SIZE>/` for sizes MINI, SMALL, MEDIUM, LARGE, XLARGE. The default is the 5-kernel quick-test set `benchmarks/polybench_medium5/`. |
 | `tiralib_dir` | Path to a compiled TiraLib checkout. |
 | `lookup_dir_suffix` | Cache of already-tried schedules is stored under `lookup_dir_<suffix>/`. |
 | `base_results_dir` | Where results and checkpoints are written. |
 | `max_llm_responses` | Hard cap on LLM turns per benchmark. |
 | `min_nb_suggestions` | Keep nudging the LLM to explore until it has tried at least this many schedules. |
 | `nb_exec_init` / `min_runs_scheds` / `max_runs_scheds` / `time_budget_factor_scheds` | Execution-measurement budgets. |
-| `temperature` / `top_p` / `nb_responses` / `enable_thinking` | LLM sampling settings. |
+| `temperature` / `top_p` / `nb_responses` / `enable_thinking` | LLM sampling settings. Not sent to Claude (see above); they still appear in the experiment folder name. |
 | `use_response_lookup` | Reuse cached compiler feedback for previously-seen schedules. Set to `false` to force fresh feedback for every schedule (e.g. when comparing feedback wording or running independent stochastic runs). The numeric caches (initial execution time, skewing factors) are always kept. |
+| `localize_illegality` | When an illegal schedule combines several transformations, legality-check each one on its own to point out the culprit. Off by default (one extra legality check per component). |
+| `experiment_name` | Base experiment name, used when `--experiment-name` is not given. |
 
-> **Security note:** do not commit real endpoint URLs or credentials. Keep `config.yaml` pointed at a placeholder and override it locally.
+> **Security note:** do not commit real endpoint URLs or credentials. Put them in `.env` (gitignored) rather than in `config.yaml`. The API key is redacted from the configuration saved in results files.
 
 ---
 
@@ -72,11 +80,26 @@ Both modes reach comparable speedups. Compact mode keeps the per-turn prompt sma
 
 Run all commands from the repository root.
 
+### Quick test (5 benchmarks)
+
+`config.yaml` points `benchmarks_dir` at `benchmarks/polybench_medium5/` by default: five PolyBench MEDIUM kernels (`2mm`, `heat3d`, `symm`, `syr2k`, `trisolv`), which is a fast way to check the whole pipeline end to end:
+
+```bash
+cp .env.example .env          # first time only; fill in ANTHROPIC_API_KEY
+python src/compilot.py --experiment-name medium5_test
+```
+
+For the full 30-kernel suite, switch `benchmarks_dir` in `config.yaml` to the commented-out `./benchmarks/polybench/MINI/` line (or another size directory) and use a new experiment name.
+
+> Benchmarks already recorded in an experiment's results JSON, including ones that failed during setup, are skipped when the same experiment is re-run. To retry them, delete `results/<experiment folder>/` or use a new `--experiment-name`.
+
 ### Single exploration
 
 ```bash
 python src/compilot.py --experiment-name my_first_run
 ```
+
+Command-line options: `--experiment-name/-n` (overrides `experiment_name` in the config), `--run-id/-i` (see below), `--config` (path to an alternative config file, default `config.yaml`), and `--completion-file/-c` (a file created when the run finishes, used by `run_duplicated_compilot.sh`).
 
 ### Best-of-K (multiple independent runs)
 
@@ -97,10 +120,11 @@ Runs are resumable out of the box. If a run is interrupted (crash, timeout, LLM 
 
 ## Output
 
-For each experiment, `base_results_dir/<experiment_name>/` contains:
-- `results_<experiment_name>.json` — full optimization dialogue, explored schedules, best schedule, timings, and token usage per benchmark.
-- `live_results_<experiment_name>.csv` — one summary row per benchmark (best speedup, counts, timing).
-- `checkpoints/` — per-benchmark resume state (auto-deleted once a benchmark finishes).
+The experiment folder is named after the experiment name plus the model and main settings: `<experiment_name>_<model>_T<temperature>_TP<top_p>_L<min_nb_suggestions>_<wT|woT>` (with a `_compact` suffix in compact mode), e.g. `results/medium5_test_claude-haiku-5-5_T1_TP1_L30_wT/`. With `--run-id N`, all runs share that folder and each run's files get a `_runN` suffix. The folder contains:
+- `results_<name>.json` — full optimization dialogue, explored schedules, best schedule, timings, and token usage per benchmark (the API key is redacted from the saved configuration).
+- `live_results_<name>.csv` — one summary row per benchmark (initial and best execution time, best speedup, schedule counts, optimization time).
+- `params.json` (or `params_runN.json`) — the run's main parameters, model id and start time.
+- `checkpoints/` — per-benchmark resume state (each checkpoint is deleted once its benchmark finishes).
 
 ---
 
@@ -114,8 +138,10 @@ The paper reports two aggregate speedup metrics, both measured against each prog
 Because the metrics aggregate over independent runs, first produce several runs of the same experiment with distinct `--run-id` values (see [Best-of-K](#best-of-k-multiple-independent-runs)), then aggregate:
 
 ```bash
-python evaluation/aggregate_json_results.py -r results/<experiment_name> --k 5
+python evaluation/aggregate_json_results.py -r results/<experiment folder> --k 5
 ```
+
+`-r` takes the full experiment folder (see [Output](#output)), which must contain `results_<name>_run*.json` files from `--run-id` runs.
 
 This prints a table of COMPILOT@T and COMPILOT_K@T over `T = 5, 10, ..., 30` and writes a per-benchmark CSV (`aggregate_results_*.csv`) alongside it. The benchmarks used in the paper are the [PolyBench](https://web.cse.ohio-state.edu/~pouchet.2/software/polybench/) kernels.
 
@@ -128,6 +154,9 @@ To regenerate the paper's figures, see `evaluation/plotting.py` (requires `matpl
 ## File Structure
 
 - `config.yaml` — centralized configuration.
+- `.env.example` — template for the `.env` file holding API keys (copy to `.env`, which is gitignored).
+- `benchmarks/` — PolyBench kernels from Tiramisu (MIT-licensed; see [`benchmarks/README.md`](benchmarks/README.md)).
+- `run_duplicated_compilot.sh` — launches several runs as SLURM jobs in `screen` sessions, restarting each until it completes (cluster-specific; edit its Conda and SLURM settings first).
 - `src/` — the core system:
   - `compilot.py` — main driver: runs the optimization dialogue for every benchmark, with checkpointing/resume.
   - `compilot_utils.py` — parsing, validation, compiler feedback generation, and the TiraLib/Tiramisu backend interface.
@@ -144,4 +173,6 @@ If you use this code in your research, please cite:
 
 ## License
 
-Released under the [Apache License 2.0](LICENSE).
+ComPilot is released under the [Apache License 2.0](LICENSE).
+
+The benchmark programs in `benchmarks/` come from the [Tiramisu](https://github.com/Tiramisu-Compiler/tiramisu) compiler and remain under Tiramisu's [MIT License](benchmarks/LICENSE). See [`benchmarks/README.md`](benchmarks/README.md).
