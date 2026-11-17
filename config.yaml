@@ -1,5 +1,21 @@
 # Configuration for ComPilot
 
+# --- Search mode ---
+# Uncomment to run the random-search baseline instead of ComPilot's LLM: transformations
+# are drawn at random (no LLM calls, no API key needed); any schedule Tiramisu reports as
+# illegal is dropped and never drawn or built upon again. Comment it out again for the LLM.
+# Results go to <base_results_dir>/<experiment_name>_random_N<nb_schedules>_S<seed>/.
+# search_mode: random
+random_search:                   # only used when search_mode is random
+  seed: 0
+  nb_schedules: 30               # stop after this many executed (legal) schedules; default max_llm_responses
+  # max_attempts: 600            # cap on schedules proposed, whatever the outcome (default 20 * nb_schedules)
+  max_schedule_length: 5         # restart from the original program once a schedule has this many transformations
+  restart_prob: 0.2              # chance of restarting from the original program after each executed schedule
+  transformations: [parallelize, interchange, reverse, skew, tile2d, tile3d, unroll, fuse]
+  tiling_factors: [16, 32, 64, 128]
+  unroll_factors: [2, 4, 8, 16]
+
 # --- LLM configuration ---
 # Values of the form ${VAR} or ${VAR:-default} are read from the environment
 # (and from a .env file in the repo root, if present; see .env.example).
