@@ -585,14 +585,42 @@ def llm_sched_str_to_sched(llm_sched_str, program, program_annots, compute_block
             loop_id = (real_comp_name,loop_level)
             new_optim = tiramisu_actions.Unrolling([loop_id,factor])
             schedule = validate_optim_and_add_to_schedule(schedule, new_optim, llm_transfs[:transf_idx+1])
+        elif transf_inst.lower().startswith('distribute'):
+            transf_id = 'distribute'
+            split_transf_params = _parse_call_args(
+                transf_inst, transf_id, 1, transf, 'comp_ID.Distribute(L<level>)')
+            loop_level = _parse_level(split_transf_params[0], real_comp_name, schedule, transf, comp_id)
+            groups = _distribution_groups(real_comp_name, loop_level, schedule, compute_blocks_IDs)
+            if len(groups) < 2:
+                raise InvalidScheduleError(
+                    f'Nothing to distribute in "{transf}": loop L{loop_level} of {comp_id} has a '
+                    f'single body (one comp_ID block and no other nested loop). Distribute a loop '
+                    f'that contains several comp_ID blocks or nested loops.')
+            new_optim = tiramisu_actions.Distribution([(real_comp_name, loop_level)], groups)
+            schedule = validate_optim_and_add_to_schedule(schedule, new_optim, llm_transfs[:transf_idx+1])
         else:
             transf_name = transf_inst.split('(')[0]
             raise InvalidScheduleError(
                 f'Unknown transformation "{transf_name}" in "{transf}". Supported: Fuse, '
-                f'Interchange, Parallelize, Tile2D, Tile3D, Unroll, Skew, Reverse.')
+                f'Distribute, Interchange, Parallelize, Tile2D, Tile3D, Unroll, Skew, Reverse.')
 
 
     return schedule
+
+def _distribution_groups(real_comp_name, loop_level, schedule, compute_blocks_IDs):
+    """Groups of computations that each get their own copy of the loop when the
+    loop at `loop_level` enclosing `real_comp_name` is distributed: one group per
+    nested loop, and one per comp_ID block placed directly in the loop body (the
+    computations of a block always stay together)."""
+    tree = schedule.tree
+    iterator = tree.iterators[tree.get_iterator_of_computation(real_comp_name, loop_level).id]
+    groups = [list(tree.get_iterator_subtree_computations(child)) for child in iterator.child_iterators]
+    block_of = {comp: block for block, comps in compute_blocks_IDs.items() for comp in comps}
+    direct = {}
+    for comp in iterator.computations_list:
+        direct.setdefault(block_of.get(comp, comp), []).append(comp)
+    groups.extend(direct.values())
+    return groups
 
 # --- Loop-extent helpers and the over-unrolling guard ---
 def get_innermost_level(real_comp_name, schedule):
@@ -730,6 +758,9 @@ def _localize_illegality(llm_sched_str, tiramisu_program, annots, compute_blocks
                     individually_legal.append(t)
                 else:
                     individually_illegal.append(t)
+            except tiramisu_actions.CannotApplyException as e:
+                if 'illegal schedule prefix' in str(e):
+                    individually_illegal.append(t)
             except Exception:
                 # This single transformation can't be cleanly isolated; skip it.
                 continue
@@ -771,8 +802,15 @@ def get_compiler_response(llm_sched_str, tiramisu_program, annots, compute_block
         reason = lookup_res[3] if len(lookup_res) > 3 else _derive_log_reason(outcome_type, outcome_data, initial_exec_time)
         explored_scheds.append((llm_sched_str, outcome_type, True, outcome_data, reason))
         return message
+    illegal_prefix = False
     try:
         schedule = llm_sched_str_to_sched(llm_sched_str, tiramisu_program, annots, compute_blocks_IDs)
+    except tiramisu_actions.CannotApplyException as e:
+        # Fusion, distribution and tiling rebuild the loop tree from the
+        # compiler's AST, which is refused once the schedule so far is illegal.
+        if 'illegal schedule prefix' not in str(e):
+            raise
+        illegal_prefix = True
     except InvalidScheduleError as e:
         # A schedule that is syntactically/structurally invalid. Caught before any
         # compiler call and reported to the LLM with a precise, actionable reason.
@@ -799,7 +837,7 @@ def get_compiler_response(llm_sched_str, tiramisu_program, annots, compute_block
         update_lookup_file(llm_sched_str, prog_name, 'compiler_responses', (message, 'crash', traceback.format_exc(), reason))
         return message
     try:
-        is_legal = schedule.is_legal()
+        is_legal = False if illegal_prefix else schedule.is_legal()
     except Exception as e:
         reason = 'crashed: compiler crash during the legality check'
         explored_scheds.append((llm_sched_str, 'crash', False, traceback.format_exc(), reason))

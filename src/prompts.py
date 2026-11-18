@@ -40,6 +40,7 @@ You can revoke transformations, modify them, extend them, or reorder them as nec
 Below is the syntax of each supported transformation command:
 
 - Loop Fusion: `<comp_ID_1>.Fuse(<comp_ID_2>, L<level>)`
+- Loop Distribution: `<comp_ID>.Distribute(L<level>)`
 - Loop Interchange: `<comp_ID>.Interchange(L<level1>, L<level2>)`
 - Loop Parallelization: `<comp_ID>.Parallelize(L<level>)`
 - 2D Loop Tiling: `<comp_ID>.Tile2D(L<level1>, L<level2>, <tiling_factor1>, <tiling_factor2>)`
@@ -70,16 +71,18 @@ The generated code targets AVX and SSE4.1 only (Tiramisu does not enable AVX2 or
 # Rules to keep a schedule valid (following these avoids rejected suggestions):
 - Unrolling must be the LAST transformation applied to a given computation. Place every Unroll(...) command at the end of your schedule.
 - Interchange, Skewing and Tiling require the targeted loops to be perfectly nested (no other statement or loop between them). Skewing and Tiling additionally require the targeted levels to be consecutive (e.g. L1 and L2, not L0 and L2).
+- Distribution splits the loop at L<level> enclosing comp_ID into one copy per element of its body: one per nested loop and one per comp_ID block placed directly in it. Distribute a loop only if its body has more than one element.
 - Tiling and Skewing create new loop levels and therefore renumber the deeper loops. After using them, re-check the loop-level numbers you refer to.
 - Do not unroll or tile a loop by a factor larger than its iteration count.
 
 # General Notes:
 - To unroll an innermost loop, you can use `L-1` as the loop level selector.
 - Regarding loop skewing, the compiler will automatically determine the appropriate skewing factors by running a solver. Loop skewing can either enable parallelization (of one of the two skewed loops) or improve locality. Skewing works only if applied on a pair of perfectly nested loops.
+- Distribution is the inverse of fusion. It separates computations that share a loop, so that each one can then be transformed on its own. For example, when a loop holds both an initialization and a nested reduction loop, the nest is not perfectly nested and cannot be interchanged; distributing that loop first makes the reduction's nest perfectly nested, so it can be interchanged (e.g. to make the innermost loop access memory contiguously) or parallelized independently. After distributing at level X, the comp_IDs of the separated blocks no longer share the loops from level X down. Distribution is illegal when a later iteration of the distributed loop needs a value computed by a statement that would move into an earlier copy of the loop (e.g. distributing the time loop of a stencil).
 - If a compound transformation is illegal or crashes, consider revoking some components of the schedule to identify the cause.
 - Consider the following potential fixes for crashes:
     - If the sequence of transformations involves unrollings, you may consider reordering your list of transformations so that unrollings appear at the end.
-    - If the sequence of transformations involves fusion, you may consider reordering your list of transformations so that fusion appears at the beginning.  Also, keep in mind that after applying fusion at level X, the two used comp_IDs will point to the same fused block up to level X. For example, comp04.fuse(comp05, L2)+comp04.Parallelize(L1) is strictly equivalent to comp04.fuse(comp05, L2)+comp05.Parallelize(L1) since comp04 at L1 and comp05 at L1 point to the same loop post-fusion. So ensure you are not applying the same transformation with different comp_IDs.
+    - If the sequence of transformations involves fusion, you may consider reordering your list of transformations so that fusion and distribution appear at the beginning.  Also, keep in mind that after applying fusion at level X, the two used comp_IDs will point to the same fused block up to level X. For example, comp04.fuse(comp05, L2)+comp04.Parallelize(L1) is strictly equivalent to comp04.fuse(comp05, L2)+comp05.Parallelize(L1) since comp04 at L1 and comp05 at L1 point to the same loop post-fusion. So ensure you are not applying the same transformation with different comp_IDs.
 """
 
 start_exploration_message = "Okay. Please start exploring transformations."

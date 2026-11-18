@@ -12,7 +12,7 @@ random_search:                   # only used when search_mode is random
   # max_attempts: 600            # cap on schedules proposed, whatever the outcome (default 20 * nb_schedules)
   max_schedule_length: 5         # restart from the original program once a schedule has this many transformations
   restart_prob: 0.2              # chance of restarting from the original program after each executed schedule
-  transformations: [parallelize, interchange, reverse, skew, tile2d, tile3d, unroll, fuse]
+  transformations: [parallelize, interchange, reverse, skew, tile2d, tile3d, unroll, fuse, distribute]
   tiling_factors: [16, 32, 64, 128]
   unroll_factors: [2, 4, 8, 16]
 
