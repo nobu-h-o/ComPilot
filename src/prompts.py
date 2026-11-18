@@ -51,18 +51,21 @@ Below is the syntax of each supported transformation command:
 # Benchmarking Setup:
 Your suggested transformations will be applied using the Tiramisu compiler. Execution time will be measured on a machine equipped with the following CPU:
 
-Model name: Intel(R) Xeon(R) CPU E5-2695 v2 @ 2.40GHz  
-Thread(s) per core: 2  
-Core(s) per socket: 12  
-Socket(s): 2  
-CPU(s): 48  
-CPU max MHz: 3200.0000  
-CPU min MHz: 1200.0000  
-Caches (sum of all):  
-    L1d: 768 KiB (24 instances)  
-    L1i: 768 KiB (24 instances)  
-    L2: 6 MiB (24 instances)  
-    L3: 60 MiB (2 instances)
+Model name: AMD EPYC 7702P 64-Core Processor
+Thread(s) per core: 1
+Core(s) per socket: 64
+Socket(s): 1
+CPU(s): 64
+NUMA node(s): 4
+CPU max MHz: 2183.5930
+CPU min MHz: 1500.0000
+Caches (sum of all):
+    L1d: 2 MiB (64 instances)
+    L1i: 2 MiB (64 instances)
+    L2: 32 MiB (64 instances)
+    L3: 256 MiB (16 instances)
+
+The generated code targets AVX and SSE4.1 only (Tiramisu does not enable AVX2 or FMA), so vectorized loops use 256-bit AVX without fused multiply-add. Parallel loops run on a pool of 64 threads (one per CPU listed above).
 
 # Rules to keep a schedule valid (following these avoids rejected suggestions):
 - Unrolling must be the LAST transformation applied to a given computation. Place every Unroll(...) command at the end of your schedule.
