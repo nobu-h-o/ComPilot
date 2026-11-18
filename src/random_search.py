@@ -1,6 +1,6 @@
 """Random-search baseline (no LLM).
 
-Explores the same transformation space as ComPilot (Fuse, Distribute,
+Explores the same transformation space as ComPilot (Fuse, Distribute, Expand,
 Interchange, Parallelize, Tile2D, Tile3D, Unroll, Skew, Reverse) and uses the same compiler
 backend, feedback cache and result bookkeeping, but picks transformations
 uniformly at random instead of asking an LLM. It exists to measure how much the
@@ -33,7 +33,7 @@ from compilot_utils import (
 )
 
 ALL_TRANSFORMATIONS = ("parallelize", "interchange", "reverse", "skew",
-                       "tile2d", "tile3d", "unroll", "fuse", "distribute")
+                       "tile2d", "tile3d", "unroll", "fuse", "distribute", "expand")
 
 DEFAULTS = {
     "seed": 0,
@@ -109,6 +109,10 @@ def _candidate_transformations(schedule_str, schedule, compute_blocks_IDs, cfg):
                       for f2 in cfg["tiling_factors"] for f3 in cfg["tiling_factors"]]
         if "distribute" in allowed:
             cands += [f"{comp_id}.Distribute(L{i})" for i in levels]
+        if "expand" in allowed and all('.expand(' in t.lower() for t in applied):
+            # Expansion must precede every other transformation; blocks that
+            # write no temporary buffer are rejected by the parser.
+            cands += [f"{comp_id}.Expand(L{i})" for i in levels]
         if "unroll" in allowed:
             cands += [f"{comp_id}.Unroll(L{d},{f})" for f in cfg["unroll_factors"]]
         if "fuse" in allowed:

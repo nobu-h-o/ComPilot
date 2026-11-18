@@ -41,6 +41,7 @@ Below is the syntax of each supported transformation command:
 
 - Loop Fusion: `<comp_ID_1>.Fuse(<comp_ID_2>, L<level>)`
 - Loop Distribution: `<comp_ID>.Distribute(L<level>)`
+- Array Expansion: `<comp_ID>.Expand(L<level>)`
 - Loop Interchange: `<comp_ID>.Interchange(L<level1>, L<level2>)`
 - Loop Parallelization: `<comp_ID>.Parallelize(L<level>)`
 - 2D Loop Tiling: `<comp_ID>.Tile2D(L<level1>, L<level2>, <tiling_factor1>, <tiling_factor2>)`
@@ -70,6 +71,7 @@ The generated code targets AVX and SSE4.1 only (Tiramisu does not enable AVX2 or
 
 # Rules to keep a schedule valid (following these avoids rejected suggestions):
 - Unrolling must be the LAST transformation applied to a given computation. Place every Unroll(...) command at the end of your schedule.
+- Expansion must come FIRST: place every Expand(...) command at the beginning of your schedule, before any other transformation. Its loop levels refer to the original loop nest.
 - Interchange, Skewing and Tiling require the targeted loops to be perfectly nested (no other statement or loop between them). Skewing and Tiling additionally require the targeted levels to be consecutive (e.g. L1 and L2, not L0 and L2).
 - Distribution splits the loop at L<level> enclosing comp_ID into one copy per element of its body: one per nested loop and one per comp_ID block placed directly in it. Distribute a loop only if its body has more than one element.
 - Tiling and Skewing create new loop levels and therefore renumber the deeper loops. After using them, re-check the loop-level numbers you refer to.
@@ -79,6 +81,7 @@ The generated code targets AVX and SSE4.1 only (Tiramisu does not enable AVX2 or
 - To unroll an innermost loop, you can use `L-1` as the loop level selector.
 - Regarding loop skewing, the compiler will automatically determine the appropriate skewing factors by running a solver. Loop skewing can either enable parallelization (of one of the two skewed loops) or improve locality. Skewing works only if applied on a pair of perfectly nested loops.
 - Distribution is the inverse of fusion. It separates computations that share a loop, so that each one can then be transformed on its own. For example, when a loop holds both an initialization and a nested reduction loop, the nest is not perfectly nested and cannot be interchanged; distributing that loop first makes the reduction's nest perfectly nested, so it can be interchanged (e.g. to make the innermost loop access memory contiguously) or parallelized independently. After distributing at level X, the comp_IDs of the separated blocks no longer share the loops from level X down. Distribution is illegal when a later iteration of the distributed loop needs a value computed by a statement that would move into an earlier copy of the loop (e.g. distributing the time loop of a stencil).
+- Array expansion gives each iteration of the loop at L<level> its own copy of the temporary buffers written in comp_ID's block (the buffers listed as temporary under the loop nest): a temporary scalar such as buf_3[0] becomes an array indexed by that loop's iterator, and a temporary array gets that iterator as a new first index. Every read and write of the buffer is redirected to the copy of the current iteration. Expansion alone does not make the program faster, but it removes the dependences that only exist because all iterations reuse the same memory location (e.g. a scalar accumulator reset and reused in every iteration), which can make that loop legal to parallelize, interchange or tile. Expansion is illegal when an iteration of the loop reads a value of the buffer written by another iteration (e.g. a running value carried from one iteration to the next), or when the buffer is used outside the loop.
 - If a compound transformation is illegal or crashes, consider revoking some components of the schedule to identify the cause.
 - Consider the following potential fixes for crashes:
     - If the sequence of transformations involves unrollings, you may consider reordering your list of transformations so that unrollings appear at the end.

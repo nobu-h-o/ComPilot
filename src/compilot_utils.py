@@ -417,6 +417,13 @@ def annots_to_c_prog(program_annotations, anonymize_loop_names = False):
         lines.append('    '*prev_depth+'}')
         
         
+    temporaries = sorted(
+        info['buffer_id'] for info in program_annotations['buffers']['buffers_info'].values()
+        if info['argtype'] == 'temporary')
+    if temporaries:
+        lines.append('// Temporary buffers (internal to the program, neither inputs nor outputs): '
+                     + ', '.join(f'buf_{b}' for b in temporaries))
+
     loop_nest_str = '\n'.join(lines)
     
     if anonymize_loop_names:
@@ -443,6 +450,7 @@ def llm_sched_str_to_sched(llm_sched_str, program, program_annots, compute_block
     schedule = Schedule(program)
     llm_sched_str = llm_sched_str.replace(' ', '').replace('`','')
     llm_transfs = llm_sched_str.split('+')
+    expanded = set()  # (buffer, loop level) pairs already expanded
     for transf_idx,transf in enumerate(llm_transfs):
         if transf.count('.') != 1:
             raise InvalidScheduleError(
@@ -585,6 +593,31 @@ def llm_sched_str_to_sched(llm_sched_str, program, program_annots, compute_block
             loop_id = (real_comp_name,loop_level)
             new_optim = tiramisu_actions.Unrolling([loop_id,factor])
             schedule = validate_optim_and_add_to_schedule(schedule, new_optim, llm_transfs[:transf_idx+1])
+        elif transf_inst.lower().startswith('expand'):
+            transf_id = 'expand'
+            split_transf_params = _parse_call_args(
+                transf_inst, transf_id, 1, transf, 'comp_ID.Expand(L<level>)')
+            earlier = [t for t in llm_transfs[:transf_idx] if '.expand(' not in t.lower()]
+            if earlier:
+                raise InvalidScheduleError(
+                    f'"{transf}" cannot follow {earlier[0]}: expansion changes where values are '
+                    f'stored and works on the original loops, so put every Expand(...) at the '
+                    f'beginning of the schedule.')
+            loop_level = _parse_level(split_transf_params[0], real_comp_name, schedule, transf, comp_id)
+            anchors = _expansion_anchors(compute_blocks_IDs[comp_id], program_annots)
+            if not anchors:
+                raise InvalidScheduleError(
+                    f'Nothing to expand in "{transf}": {comp_id} writes no temporary buffer. '
+                    f'Only temporary buffers (listed under the loop nest) can be expanded.')
+            mapping = program_annots['buffers']['comp_buf_mapping']
+            for anchor in anchors:
+                # Two blocks writing the same buffer: expanding it along the
+                # same loop again changes nothing.
+                if (mapping[anchor], loop_level) in expanded:
+                    continue
+                expanded.add((mapping[anchor], loop_level))
+                new_optim = tiramisu_actions.Expansion([(anchor, loop_level)])
+                schedule = validate_optim_and_add_to_schedule(schedule, new_optim, llm_transfs[:transf_idx+1])
         elif transf_inst.lower().startswith('distribute'):
             transf_id = 'distribute'
             split_transf_params = _parse_call_args(
@@ -602,10 +635,28 @@ def llm_sched_str_to_sched(llm_sched_str, program, program_annots, compute_block
             transf_name = transf_inst.split('(')[0]
             raise InvalidScheduleError(
                 f'Unknown transformation "{transf_name}" in "{transf}". Supported: Fuse, '
-                f'Distribute, Interchange, Parallelize, Tile2D, Tile3D, Unroll, Skew, Reverse.')
+                f'Distribute, Expand, Interchange, Parallelize, Tile2D, Tile3D, Unroll, Skew, Reverse.')
 
 
     return schedule
+
+def _temporary_buffers(program_annots):
+    """Names of the buffers that are internal to the program (neither inputs nor
+    outputs); only these can be expanded."""
+    return {name for name, info in program_annots['buffers']['buffers_info'].items()
+            if info['argtype'] == 'temporary'}
+
+def _expansion_anchors(block_comps, program_annots):
+    """One computation of the block per distinct temporary buffer it writes."""
+    temporaries = _temporary_buffers(program_annots)
+    mapping = program_annots['buffers']['comp_buf_mapping']
+    anchors, seen = [], set()
+    for comp in block_comps:
+        buf = mapping.get(comp)
+        if buf in temporaries and buf not in seen:
+            seen.add(buf)
+            anchors.append(comp)
+    return anchors
 
 def _distribution_groups(real_comp_name, loop_level, schedule, compute_blocks_IDs):
     """Groups of computations that each get their own copy of the loop when the
