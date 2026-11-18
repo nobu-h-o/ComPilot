@@ -74,6 +74,10 @@ Set `interaction_mode` in `config.yaml`:
 
 Both modes reach comparable speedups. Compact mode keeps the per-turn prompt small and roughly constant, so its **prompt-token cost grows far more slowly** with the number of turns. It trades this for slightly more reasoning per turn (the model re-reads the state each time), so the net token savings grow with the dialogue length — modest for very short runs, substantial for long ones. Compact runs are tagged with a `_compact` suffix on the experiment name.
 
+## Random-search baseline (no LLM)
+
+To measure what the LLM contributes, uncomment `search_mode: random` in `config.yaml` (comment it out again to go back to the LLM). ComPilot then draws transformations at random from the same space (Fuse, Interchange, Parallelize, Tile2D, Tile3D, Unroll, Skew, Reverse), using the same compiler backend, cache and result files, but makes no LLM calls and needs no API key. It runs as a random walk: starting from the original program, it appends a random transformation to the current schedule and sends it to Tiramisu. A schedule Tiramisu reports as illegal (or that crashes) is dropped and never drawn or built on again. A legal one is executed and becomes the base for the next step. The walk restarts from the original program at random (`restart_prob`) or once a schedule reaches `max_schedule_length`. It stops after `nb_schedules` executed schedules. The `random_search` block in `config.yaml` sets the seed, budget, allowed transformations and tiling/unrolling factors. Runs are named `<experiment_name>_random_N<nb_schedules>_S<seed>`, and `--run-id` changes the random stream, so best-of-K works as it does for the LLM.
+
 ---
 
 ## Usage
@@ -161,6 +165,7 @@ To regenerate the paper's figures, see `evaluation/plotting.py` (requires `matpl
   - `compilot.py` — main driver: runs the optimization dialogue for every benchmark, with checkpointing/resume.
   - `compilot_utils.py` — parsing, validation, compiler feedback generation, and the TiraLib/Tiramisu backend interface.
   - `prompts.py` — the system instructions and message templates used with the LLM.
+  - `random_search.py` — the random-search baseline used when `search_mode: random`.
 - `evaluation/` — analysis and metrics (not needed to run ComPilot):
   - `analyze_dialogue.py` — quick per-run outcome analysis.
   - `aggregate_json_results.py` / `eval_utils.py` — the paper's aggregate metrics (COMPILOT@T and best-of-K) across runs.
