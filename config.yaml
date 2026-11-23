@@ -26,7 +26,7 @@ benchmarks_dir: "./benchmarks/polybench_medium5/"
 # Full PolyBench suite (30 kernels; sizes: MINI, SMALL, MEDIUM, LARGE, XLARGE):
 # benchmarks_dir: "./benchmarks/polybench/MINI/"
 tiralib_dir: "./TiraLib/"             # path to a compiled TiraLib checkout
-lookup_dir_suffix: "base"             # results of already-tried schedules are cached under lookup_dir_<suffix>/
+lookup_dir_suffix: "vanilla"          # results of already-tried schedules are cached under lookup_dir_<suffix>/
 base_results_dir: "./results"
 
 # --- Exploration hyperparameters ---
